@@ -97,6 +97,10 @@ fun HomeScreen(
     val authEnabled by viewModel.authEnabled.collectAsStateWithLifecycle()
     val devices by viewModel.devices.collectAsStateWithLifecycle()
     val activeDeviceCount = devices.count { it.activeConnections > 0 }
+    val interfaces by viewModel.interfaces.collectAsStateWithLifecycle()
+    // Clients need the Wi-Fi IP, not the 0.0.0.0 wildcard the listener binds to.
+    val wifiIp = interfaces.firstOrNull { it.isWifi }?.address
+    fun shown(addr: String) = if (addr == "0.0.0.0" && wifiIp != null) wifiIp else addr
 
     val powerState = when (serviceState) {
         is ProxyService.State.Running -> PowerState.On
@@ -106,11 +110,11 @@ fun HomeScreen(
         else -> PowerState.Off
     }
     val statusLabel = when (val s = serviceState) {
-        is ProxyService.State.Running -> "Online · ${s.bindAddress}:${s.port}"
-        is ProxyService.State.Starting -> "Starting on ${s.bindAddress}:${s.port}"
-        is ProxyService.State.Paused -> "Paused · ${s.bindAddress}:${s.port}"
+        is ProxyService.State.Running -> "Online · ${shown(s.bindAddress)}:${s.port}"
+        is ProxyService.State.Starting -> "Starting on ${shown(s.bindAddress)}:${s.port}"
+        is ProxyService.State.Paused -> "Paused · ${shown(s.bindAddress)}:${s.port}"
         is ProxyService.State.Error -> s.message.take(60)
-        else -> "Proxy offline"
+        else -> if (wifiIp != null) "Offline · Wi-Fi $wifiIp" else "Proxy offline"
     }
 
     Column(

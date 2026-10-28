@@ -57,8 +57,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        viewModel.refreshInterfaces()
-
         setContent {
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
             DataProxyTheme(themeMode = themeMode) {
@@ -187,6 +185,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        // ponytail: refreshed on each return to the app, so the Home Wi-Fi IP
+        // follows network changes. Live updates while open need a NetworkCallback.
+        viewModel.refreshInterfaces()
         viewModel.bind()
     }
 
