@@ -250,6 +250,10 @@ These are load-bearing, break them and the app stops working.
 - **Lifecycle:** started after the server is Running, stopped first thing in
   `fullCleanup()`. Settings (`tunnel_*` in `dataproxy_prefs`) are read once
   per start. Screen: Listen, then the "Reverse tunnel" row.
+- **The tunnel requires SOCKS auth.** `startTunnel` refuses to start
+  without auth on and both fields filled, and each pairing re-checks it,
+  because the relay hands the proxy to anyone who reaches its client port.
+  Don't relax this to "auth optional".
 - **`SSLSocket` cannot half-close** (Conscrypt throws on `shutdownOutput`), so
   `copyStream` closes a tunnelled client outright on remote EOF.
 - **The relay does not use asyncio's SSL transport.** CPython 3.12 to 3.14

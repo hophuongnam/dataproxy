@@ -287,6 +287,16 @@ class ProxyService : Service() {
             _tunnelStatus.value = "Not started: host, token and pin are required"
             return
         }
+        // The relay hands the proxy to anyone who reaches its client port, so
+        // the tunnel never runs as an open proxy. Same test as
+        // Socks5Connection.negotiateMethod.
+        fun authReady() = currentAuthConfig().let {
+            it.enabled && it.username.isNotEmpty() && it.password.isNotEmpty()
+        }
+        if (!authReady()) {
+            _tunnelStatus.value = "Not started: turn on Auth with a username and password"
+            return
+        }
         val myCycle = cycleId.get()
         tunnel = ReverseTunnel(
             host = host,
@@ -295,7 +305,9 @@ class ProxyService : Service() {
             pin = pin,
             poolSize = (p.getString(PREF_TUNNEL_POOL, null)?.toIntOrNull()
                 ?: ReverseTunnel.DEFAULT_POOL).coerceIn(1, 32),
-            onPaired = { srv.adopt(it) },
+            // Re-checked per pairing: auth is live, and can be switched off
+            // while the tunnel runs.
+            onPaired = { if (authReady()) srv.adopt(it) else runCatching { it.close() } },
             // A worker thread can publish just after fullCleanup() reset this.
             onStatus = { if (cycleId.get() == myCycle) _tunnelStatus.value = it },
         )
