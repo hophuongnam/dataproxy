@@ -66,6 +66,7 @@ import com.dataproxy.ui.viewmodel.MainViewModel
 fun ListenAddressScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit,
+    onOpenTunnel: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
     val candidates by viewModel.interfaces.collectAsStateWithLifecycle()
@@ -133,6 +134,33 @@ fun ListenAddressScreen(
             enabled = canEdit,
             onChange = viewModel::selectPort,
         )
+        Spacer(Modifier.height(8.dp))
+        // Entry to the reverse tunnel: another way clients reach the proxy,
+        // so it lives here rather than as a fourth Home tile.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(SurfaceMid)
+                .clickable(onClick = onOpenTunnel)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.SettingsEthernet,
+                contentDescription = null,
+                tint = TextSecondary,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = "Reverse tunnel",
+                color = TextPrimary,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Text(text = "›", color = TextSecondary, style = MaterialTheme.typography.titleLarge)
+        }
     }
 }
 

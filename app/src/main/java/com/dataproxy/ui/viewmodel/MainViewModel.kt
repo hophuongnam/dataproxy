@@ -59,6 +59,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         MutableStateFlow<CellularNetworkProvider.State>(CellularNetworkProvider.State.Idle)
     val cellular: StateFlow<CellularNetworkProvider.State> = _cellular.asStateFlow()
 
+    private val _tunnelStatus = MutableStateFlow("Off")
+    val tunnelStatus: StateFlow<String> = _tunnelStatus.asStateFlow()
+
     private val techMonitor = CellularTechMonitor(app).also { it.start(viewModelScope) }
     val cellularTech: StateFlow<CellularTechMonitor.TechState> = techMonitor.state
 
@@ -119,6 +122,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         collectors += service.totals.onEach { _totals.value = it }.launchIn(viewModelScope)
         collectors += service.rates.onEach { _rates.value = it }.launchIn(viewModelScope)
         collectors += service.cellularState.onEach { _cellular.value = it }.launchIn(viewModelScope)
+        collectors += service.tunnelStatus.onEach { _tunnelStatus.value = it }.launchIn(viewModelScope)
     }
 
     fun bind() {

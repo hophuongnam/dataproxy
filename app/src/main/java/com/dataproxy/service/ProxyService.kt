@@ -17,6 +17,7 @@ import com.dataproxy.R
 import com.dataproxy.network.CellularNetworkProvider
 import com.dataproxy.proxy.AuthConfig
 import com.dataproxy.proxy.ConnectionRegistry
+import com.dataproxy.proxy.ReverseTunnel
 import com.dataproxy.proxy.Socks5Server
 import com.dataproxy.proxy.SpeedSampler
 import com.dataproxy.util.ByteFormatter
@@ -68,6 +69,7 @@ class ProxyService : Service() {
     private val sampler = SpeedSampler()
 
     private var server: Socks5Server? = null
+    private var tunnel: ReverseTunnel? = null
     private var startJob: Job? = null
     private var publishJob: Job? = null
     private var cellularWatchJob: Job? = null
@@ -80,6 +82,8 @@ class ProxyService : Service() {
     val rates: StateFlow<SpeedSampler.Rates> = sampler.rates
     // Computed: defers cellular's by-lazy init until first read (post-onCreate).
     val cellularState: StateFlow<CellularNetworkProvider.State> get() = cellular.state
+    private val _tunnelStatus = MutableStateFlow("Off")
+    val tunnelStatus: StateFlow<String> = _tunnelStatus.asStateFlow()
 
     sealed interface State {
         data object Stopped : State
@@ -204,6 +208,7 @@ class ProxyService : Service() {
                 acquireWakeLock()
                 startSampling()
                 startCellularWatch(bindAddress, port)
+                startTunnel(srv)
                 updateNotification(bindAddress, port, totals.value, rates.value)
             }
         }
@@ -225,6 +230,8 @@ class ProxyService : Service() {
         startJob?.cancel(); startJob = null
         publishJob?.cancel(); publishJob = null
         cellularWatchJob?.cancel(); cellularWatchJob = null
+        tunnel?.stop(); tunnel = null
+        _tunnelStatus.value = "Off"
         server?.stop(); server = null
         cellular.stop()
         registry.reset()
@@ -263,6 +270,35 @@ class ProxyService : Service() {
                 }
             }
         }
+    }
+
+    /**
+     * Start the reverse tunnel if it is switched on. Settings are read once
+     * here, so edits apply on the next start. Runs through Paused too: a
+     * paired client then gets REP_NETWORK_UNREACHABLE, same as LAN clients.
+     */
+    private fun startTunnel(srv: Socks5Server) {
+        val p = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        if (!p.getBoolean(PREF_TUNNEL_ENABLED, false)) return
+        val host = p.getString(PREF_TUNNEL_HOST, "").orEmpty().trim()
+        val token = p.getString(PREF_TUNNEL_TOKEN, "").orEmpty().trim()
+        val pin = p.getString(PREF_TUNNEL_PIN, "").orEmpty().trim()
+        if (host.isEmpty() || token.isEmpty() || pin.isEmpty()) {
+            _tunnelStatus.value = "Not started: host, token and pin are required"
+            return
+        }
+        val myCycle = cycleId.get()
+        tunnel = ReverseTunnel(
+            host = host,
+            port = p.getString(PREF_TUNNEL_PORT, null)?.toIntOrNull() ?: ReverseTunnel.DEFAULT_PORT,
+            token = token,
+            pin = pin,
+            poolSize = (p.getString(PREF_TUNNEL_POOL, null)?.toIntOrNull()
+                ?: ReverseTunnel.DEFAULT_POOL).coerceIn(1, 32),
+            onPaired = { srv.adopt(it) },
+            // A worker thread can publish just after fullCleanup() reset this.
+            onStatus = { if (cycleId.get() == myCycle) _tunnelStatus.value = it },
+        )
     }
 
     // -------------------------------------------------------------- foreground
@@ -435,6 +471,14 @@ class ProxyService : Service() {
         // rebuild so a toggle made while the proxy is running takes effect
         // on the next update without a restart.
         const val PREF_RATE_UNIT = "rate_unit"
+        // Reverse tunnel, written by TunnelScreen, read once per start.
+        // Port and pool are stored as strings, straight from the text fields.
+        const val PREF_TUNNEL_ENABLED = "tunnel_enabled"
+        const val PREF_TUNNEL_HOST = "tunnel_host"
+        const val PREF_TUNNEL_PORT = "tunnel_port"
+        const val PREF_TUNNEL_TOKEN = "tunnel_token"
+        const val PREF_TUNNEL_PIN = "tunnel_pin"
+        const val PREF_TUNNEL_POOL = "tunnel_pool"
 
         fun startIntent(ctx: Context, addr: String, port: Int) =
             Intent(ctx, ProxyService::class.java)

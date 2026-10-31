@@ -236,6 +236,28 @@ These are load-bearing, break them and the app stops working.
   cannot be proxied at all, and a client that asks for one will resolve it
   itself. A SOCKS5 proxy cannot prevent that; only a VpnService could.
 
+## Reverse tunnel (unreleased)
+
+- **What it is.** `ReverseTunnel` keeps N idle TLS links from the phone to a
+  relay (`server/dpt_server.py`, stdlib Python). The relay pairs each SOCKS5
+  client on its plain port with one link and splices bytes. The paired
+  `SSLSocket` goes to `Socks5Server.adopt()`, so the cap, auth and teardown on
+  stop apply exactly as for an accepted socket. Protocol is in the class docs.
+- **Tunnel links use the default network, no `bindSocket`.** That is the
+  operator's design (the phone roams, Tailscale breaks `bindSocket`). Only
+  target connections in `Socks5Connection.openRemote` go via cellular. The
+  default-network resolve of the relay host is deliberate, not a DNS leak.
+- **Lifecycle:** started after the server is Running, stopped first thing in
+  `fullCleanup()`. Settings (`tunnel_*` in `dataproxy_prefs`) are read once
+  per start. Screen: Listen, then the "Reverse tunnel" row.
+- **`SSLSocket` cannot half-close** (Conscrypt throws on `shutdownOutput`), so
+  `copyStream` closes a tunnelled client outright on remote EOF.
+- **The relay does not use asyncio's SSL transport.** CPython 3.12 to 3.14
+  drop data decrypted in the same batch as a later SSL error, and a JVM TLS
+  1.3 close (data + user_canceled + close_notify) lost the last reply bytes
+  about half the time. `Tls` in the relay runs TLS over `ssl.MemoryBIO`.
+  Test: `python3 server/test_dpt.py`.
+
 ## SOCKS5 protocol surface (v1.1)
 
 - **CONNECT (0x01)**: TCP tunnel, the original feature. Hostname ATYP

@@ -221,7 +221,7 @@ private fun EnableRow(enabled: Boolean, onToggle: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
+internal fun fieldColors() = OutlinedTextFieldDefaults.colors(
     focusedBorderColor = Accent,
     unfocusedBorderColor = OutlineStrong,
     disabledBorderColor = OutlineSoft,

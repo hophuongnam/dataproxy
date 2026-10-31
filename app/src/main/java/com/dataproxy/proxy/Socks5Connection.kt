@@ -426,7 +426,11 @@ class Socks5Connection(
             runCatching { sink.flush() }
             // Half-close so the peer's reader sees EOF without us closing the
             // socket, the other direction may still be carrying data.
-            runCatching { if (!sinkSocket.isOutputShutdown) sinkSocket.shutdownOutput() }
+            // An SSLSocket (a ReverseTunnel link) cannot half-close, its
+            // shutdownOutput() throws, so close it outright, or the client
+            // never sees the remote's EOF.
+            if (sinkSocket is javax.net.ssl.SSLSocket) runCatching { sinkSocket.close() }
+            else runCatching { if (!sinkSocket.isOutputShutdown) sinkSocket.shutdownOutput() }
         }
     }
 

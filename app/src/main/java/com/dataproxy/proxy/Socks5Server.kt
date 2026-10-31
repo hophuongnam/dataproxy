@@ -14,6 +14,7 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -123,57 +124,7 @@ class Socks5Server(
                         continue
                     }
                     consecutiveFailures = 0
-                    // Admission control. Every CONNECT tunnel pins two OS
-                    // threads for its lifetime (the up/down copy loops) and
-                    // every UDP ASSOCIATE three, on a cached pool that has no
-                    // maximum, so accept is the only backpressure there is.
-                    // Without this, a client holding thousands of sockets open
-                    // takes the process out with OutOfMemoryError:
-                    // pthread_create failed. Reject rather than block: blocking
-                    // accept would just fill the 64-deep backlog and leave
-                    // clients hanging with no SOCKS5 reply.
-                    //
-                    // cap <= 0 means unlimited, the user's own choice to trade
-                    // the OOM guard away for headroom above the default; skip
-                    // the check entirely rather than compare against a
-                    // sentinel that could theoretically collide with `live`.
-                    val cap = maxConnectionsProvider()
-                    if (cap > 0 && live.get() >= cap) {
-                        Log.w(TAG, "at capacity ($cap), rejecting ${client.remoteSocketAddress}")
-                        runCatching { client.close() }
-                        continue
-                    }
-                    live.incrementAndGet()
-                    val conn = Socks5Connection(
-                        clientSocket = client,
-                        cellular = cellular,
-                        registry = registry,
-                        scope = scope,
-                        authProvider = authProvider,
-                    )
-                    liveConnections.add(conn)
-                    // Re-check after publishing. stop() clears `running`
-                    // before it snapshots liveConnections, so a connection
-                    // accepted concurrently is caught by exactly one side:
-                    // either it made the snapshot and stop() aborts it, or it
-                    // did not, and this read sees the cleared flag. Without
-                    // this, a connection accepted in that window would escape
-                    // teardown entirely and keep relaying.
-                    if (!running) {
-                        liveConnections.remove(conn)
-                        live.decrementAndGet()
-                        runCatching { conn.abort() }
-                        break
-                    }
-                    // invokeOnCompletion rather than a callback inside the
-                    // coroutine body: if the scope is already cancelled, launch
-                    // completes without ever running the body (so no finally),
-                    // but the completion handler still fires and the slot is
-                    // released.
-                    conn.handle().invokeOnCompletion {
-                        liveConnections.remove(conn)
-                        live.decrementAndGet()
-                    }
+                    if (!adopt(client)) break
                 }
             } finally {
                 Log.i(TAG, "accept loop exited")
@@ -191,6 +142,66 @@ class Socks5Server(
                 }
             }
         }
+    }
+
+    /**
+     * Admit one client socket, from the accept loop or from [ReverseTunnel].
+     * Returns false once this server is stopping, so the accept loop exits.
+     * Safe to call from any thread.
+     */
+    fun adopt(client: Socket): Boolean {
+        // Admission control. Every CONNECT tunnel pins two OS
+        // threads for its lifetime (the up/down copy loops) and
+        // every UDP ASSOCIATE three, on a cached pool that has no
+        // maximum, so accept is the only backpressure there is.
+        // Without this, a client holding thousands of sockets open
+        // takes the process out with OutOfMemoryError:
+        // pthread_create failed. Reject rather than block: blocking
+        // accept would just fill the 64-deep backlog and leave
+        // clients hanging with no SOCKS5 reply.
+        //
+        // cap <= 0 means unlimited, the user's own choice to trade
+        // the OOM guard away for headroom above the default; skip
+        // the check entirely rather than compare against a
+        // sentinel that could theoretically collide with `live`.
+        val cap = maxConnectionsProvider()
+        if (cap > 0 && live.get() >= cap) {
+            Log.w(TAG, "at capacity ($cap), rejecting ${client.remoteSocketAddress}")
+            runCatching { client.close() }
+            return true
+        }
+        live.incrementAndGet()
+        val conn = Socks5Connection(
+            clientSocket = client,
+            cellular = cellular,
+            registry = registry,
+            scope = scope,
+            authProvider = authProvider,
+        )
+        liveConnections.add(conn)
+        // Re-check after publishing. stop() clears `running`
+        // before it snapshots liveConnections, so a connection
+        // accepted concurrently is caught by exactly one side:
+        // either it made the snapshot and stop() aborts it, or it
+        // did not, and this read sees the cleared flag. Without
+        // this, a connection accepted in that window would escape
+        // teardown entirely and keep relaying.
+        if (!running) {
+            liveConnections.remove(conn)
+            live.decrementAndGet()
+            runCatching { conn.abort() }
+            return false
+        }
+        // invokeOnCompletion rather than a callback inside the
+        // coroutine body: if the scope is already cancelled, launch
+        // completes without ever running the body (so no finally),
+        // but the completion handler still fires and the slot is
+        // released.
+        conn.handle().invokeOnCompletion {
+            liveConnections.remove(conn)
+            live.decrementAndGet()
+        }
+        return true
     }
 
     fun stop() {
